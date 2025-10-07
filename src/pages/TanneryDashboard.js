@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from "react";
-// import { useNavigate } from "react-router-dom";
 import { fetchWithAuth } from "../utils/api";
 import {
   Container,
@@ -18,6 +17,7 @@ import {
   CircularProgress,
   useTheme,
   useMediaQuery,
+  Stack,
 } from "@mui/material";
 import {
   CheckCircle,
@@ -29,6 +29,8 @@ import {
   Inventory,
   Search as SearchIcon,
   Factory,
+  Download as DownloadIcon,
+  CalendarToday,
 } from "@mui/icons-material";
 import Navbar from "../components/Navbar";
 
@@ -41,12 +43,11 @@ const TanneryDashboard = ({
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
-  // const navigate = useNavigate();
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [action, setAction] = useState("arrived");
+  const [action, setAction] = useState("arrived"); // Default to arrived
   const [formData, setFormData] = useState({
     search_id: "",
     tannery_stamp_code: "",
@@ -54,7 +55,7 @@ const TanneryDashboard = ({
     vehicle_number: "",
     processed_lot_number: "",
     dispatch_to: "",
-    article: "", // New field
+    article: "",
     tannage_type: "",
   });
   const [openSnackbar, setOpenSnackbar] = useState(false);
@@ -66,7 +67,13 @@ const TanneryDashboard = ({
     page: 1,
     pageSize: 20,
     total: 0,
+    totalPages: 0,
   });
+
+  // New state for CSV export
+  const [exportStartDate, setExportStartDate] = useState("");
+  const [exportEndDate, setExportEndDate] = useState("");
+  const [exportLoading, setExportLoading] = useState(false);
 
   const styles = {
     container: {
@@ -74,40 +81,6 @@ const TanneryDashboard = ({
       minHeight: "100vh",
       py: isMobile ? 2 : 4,
       mt: isMobile ? 8 : 13,
-    },
-    profileCard: {
-      background: "white",
-      borderRadius: "12px",
-      boxShadow: "0 4px 20px rgba(0, 0, 0, 0.08)",
-      overflow: "hidden",
-      // mb: 4,
-    },
-    profileHeader: {
-      background: "linear-gradient(135deg, #2c3e50 0%, #3498db 100%)",
-      color: "white",
-      // py: 4,
-      px: 4,
-      textAlign: "center",
-    },
-    profileContent: {
-      p: 4,
-    },
-    detailItem: {
-      display: "flex",
-      alignItems: "center",
-      gap: 2,
-      p: 2,
-      borderRadius: "8px",
-      backgroundColor: "rgba(52, 152, 219, 0.05)",
-      mb: 2,
-      transition: "all 0.3s ease",
-      "&:hover": {
-        backgroundColor: "rgba(52, 152, 219, 0.1)",
-        transform: "translateY(-2px)",
-      },
-    },
-    detailIcon: {
-      color: "#3498db",
     },
     sectionTitle: {
       color: "#2c3e50",
@@ -131,6 +104,13 @@ const TanneryDashboard = ({
       boxShadow: "0 4px 20px rgba(0, 0, 0, 0.08)",
       p: 4,
     },
+    exportCard: {
+      background: "white",
+      borderRadius: "12px",
+      boxShadow: "0 4px 20px rgba(0, 0, 0, 0.08)",
+      p: 3,
+      mb: 2,
+    },
     actionButton: {
       flex: 1,
       fontWeight: 600,
@@ -149,6 +129,14 @@ const TanneryDashboard = ({
           backgroundColor: "#2980b9",
         },
       },
+    },
+    exportButton: {
+      backgroundColor: "#27ae60",
+      "&:hover": {
+        backgroundColor: "#219653",
+      },
+      minWidth: isMobile ? "100%" : 140,
+      height: 40,
     },
     formInput: {
       "& .MuiInputLabel-root": { color: "#2c3e50" },
@@ -221,8 +209,7 @@ const TanneryDashboard = ({
     return () => {
       isMounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [setActiveSection]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -272,11 +259,10 @@ const TanneryDashboard = ({
       }
 
       const data = await response.json();
-      console.log("data::", data);
       setSuccess(data.message || "Operation completed successfully");
 
-      // FIXED: Pass current pagination values
-      fetchTransactions(pagination.page, pagination.pageSize);
+      // Refresh transactions after successful operation
+      fetchTransactions();
 
       setFormData({
         search_id: "",
@@ -297,37 +283,120 @@ const TanneryDashboard = ({
   };
 
   const fetchTransactions = useCallback(
-    async (page, pageSize) => {
-      setTransactionLoading(true);
-      try {
-        const endpoint = getTransactionsEndpoint(userRole);
-        const response = await fetchWithAuth(
-          `${endpoint}?page=${page}&page_size=${pageSize}&search=${searchTerm}`
-        );
-        const data = await response.json();
-        console.log("data for transactions: ", data);
-        if (response.ok) {
-          setTransactions(data.transactions);
-          setPagination((prev) => ({
-            ...prev,
-            total: data.total,
-            totalPages: data.total_pages,
-          }));
-        } else {
-          setTransactionError(data.error || "Failed to load transactions");
-        }
-      } catch (err) {
-        setTransactionError(err.message || "Failed to load transactions");
-      } finally {
-        setTransactionLoading(false);
-      }
-    },
-    [searchTerm, userRole]
-  );
+  async (page = pagination.page, pageSize = pagination.pageSize) => {
+    setTransactionLoading(true);
+    try {
+      const endpoint = getTransactionsEndpoint(userRole);
+      
+      // Build query parameters
+      const params = new URLSearchParams({
+        page: page.toString(),
+        page_size: pageSize.toString(),
+      });
 
-  useEffect(() => {
-    fetchTransactions(pagination.page, pagination.pageSize);
-  }, [fetchTransactions, pagination.page, pagination.pageSize]);
+      // Add action filter - this is the key fix
+      if (action) {
+        params.append('action', action);
+      }
+
+      // Add search term if provided
+      if (searchTerm) {
+        params.append('search', searchTerm);
+      }
+
+      const response = await fetchWithAuth(
+        `${endpoint}?${params.toString()}`
+      );
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        setTransactions(data.transactions || []);
+        setPagination((prev) => ({
+          ...prev,
+          total: data.total || 0,
+          totalPages: data.total_pages || 0,
+          page: data.page || 1,
+        }));
+      } else {
+        setTransactionError(data.error || "Failed to load transactions");
+      }
+    } catch (err) {
+      setTransactionError(err.message || "Failed to load transactions");
+    } finally {
+      setTransactionLoading(false);
+    }
+  },
+  [searchTerm, userRole, action, pagination.page, pagination.pageSize]
+);
+
+// Fetch transactions when action, searchTerm, or pagination changes
+useEffect(() => {
+  fetchTransactions(pagination.page, pagination.pageSize);
+}, [action, searchTerm, pagination.page, pagination.pageSize, fetchTransactions]);
+
+// Handle search term changes with debounce
+useEffect(() => {
+  const timer = setTimeout(() => {
+    setPagination(prev => ({ ...prev, page: 1 }));
+    fetchTransactions(1, pagination.pageSize);
+  }, 500);
+
+  return () => clearTimeout(timer);
+}, [searchTerm, pagination.pageSize, fetchTransactions]);
+
+  // New function to handle CSV export
+  const handleExportCSV = async () => {
+    if (!exportStartDate || !exportEndDate) {
+      setError("Please select both start and end dates");
+      setOpenSnackbar(true);
+      return;
+    }
+
+    setExportLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetchWithAuth(
+        `https://ret.bijlicity.com/api/tannery/export-transactions/?start_date=${exportStartDate}&end_date=${exportEndDate}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to export data");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `tannery_operations_${exportStartDate}_to_${exportEndDate}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+      setSuccess("CSV exported successfully!");
+      setOpenSnackbar(true);
+    } catch (err) {
+      setError(err.message || "Failed to export CSV");
+      setOpenSnackbar(true);
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleActionChange = (newAction) => {
+    setAction(newAction);
+    // Reset to first page when changing action
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    // Clear search term when changing action
+    setSearchTerm("");
+  };
+
+  const handlePageChange = (newPage) => {
+    setPagination((prev) => ({ ...prev, page: newPage }));
+    fetchTransactions(newPage, pagination.pageSize);
+  };
 
   const handleCloseSnackbar = () => {
     setOpenSnackbar(false);
@@ -401,7 +470,7 @@ const TanneryDashboard = ({
                   className={action === "arrived" ? "active" : "inactive"}
                   sx={styles.tabButton}
                   startIcon={<ArrowDownward />}
-                  onClick={() => setAction("arrived")}
+                  onClick={() => handleActionChange("arrived")}
                 >
                   Process Arrival
                 </Button>
@@ -409,7 +478,7 @@ const TanneryDashboard = ({
                   className={action === "dispatched" ? "active" : "inactive"}
                   sx={styles.tabButton}
                   startIcon={<ArrowUpward />}
-                  onClick={() => setAction("dispatched")}
+                  onClick={() => handleActionChange("dispatched")}
                 >
                   Process Dispatch
                 </Button>
@@ -419,7 +488,7 @@ const TanneryDashboard = ({
               {action === "arrived" && (
                 <form onSubmit={handleSubmit}>
                   <Grid container spacing={3}>
-                    <Grid item size={{ xs: 12, md: 6 }}>
+                    <Grid item xs={12} md={6}>
                       <TextField
                         fullWidth
                         variant="outlined"
@@ -435,7 +504,7 @@ const TanneryDashboard = ({
                       />
                     </Grid>
 
-                    <Grid item size={{ xs: 12, md: 6 }}>
+                    <Grid item xs={12} md={6}>
                       <FormControl fullWidth required sx={styles.formInput}>
                         <InputLabel>Hide/Skin Type</InputLabel>
                         <Select
@@ -453,7 +522,7 @@ const TanneryDashboard = ({
                       </FormControl>
                     </Grid>
 
-                    <Grid item size={{ xs: 12, md: 6 }}>
+                    <Grid item xs={12} md={6}>
                       <TextField
                         fullWidth
                         variant="outlined"
@@ -468,7 +537,7 @@ const TanneryDashboard = ({
                       />
                     </Grid>
 
-                    <Grid item size={{ xs: 12, md: 6 }}>
+                    <Grid item xs={12} md={6}>
                       <TextField
                         fullWidth
                         variant="outlined"
@@ -509,8 +578,7 @@ const TanneryDashboard = ({
               {action === "dispatched" && (
                 <form onSubmit={handleSubmit}>
                   <Grid container spacing={3}>
-                    {/* First Row - 3 items */}
-                    <Grid item size={{ xs: 12, md: 4 }}>
+                    <Grid item xs={12} md={4}>
                       <TextField
                         fullWidth
                         variant="outlined"
@@ -526,16 +594,14 @@ const TanneryDashboard = ({
                       />
                     </Grid>
 
-                    <Grid item size={{ xs: 12, md: 4 }}>
+                    <Grid item xs={12} md={4}>
                       <FormControl fullWidth sx={styles.formInput}>
                         <InputLabel>Tannage Type</InputLabel>
                         <Select
-                          fullWidth // Add this
                           name="tannage_type"
                           value={formData.tannage_type || ""}
                           onChange={handleChange}
                           label="Tannage Type"
-                          sx={{ width: "100%" }} // Ensure full width
                         >
                           <MenuItem value="Chrome">Chrome</MenuItem>
                           <MenuItem value="Chrome-free">Chrome-free</MenuItem>
@@ -544,7 +610,7 @@ const TanneryDashboard = ({
                       </FormControl>
                     </Grid>
 
-                    <Grid item size={{ xs: 12, md: 4 }}>
+                    <Grid item xs={12} md={4}>
                       <TextField
                         fullWidth
                         variant="outlined"
@@ -556,8 +622,7 @@ const TanneryDashboard = ({
                       />
                     </Grid>
 
-                    {/* Second Row - 2 items */}
-                    <Grid item size={{ xs: 12, md: 6 }}>
+                    <Grid item xs={12} md={6}>
                       <TextField
                         fullWidth
                         variant="outlined"
@@ -573,7 +638,7 @@ const TanneryDashboard = ({
                       />
                     </Grid>
 
-                    <Grid size={{ xs: 12, md: 6 }}>
+                    <Grid item xs={12} md={6}>
                       <TextField
                         fullWidth
                         variant="outlined"
@@ -611,10 +676,88 @@ const TanneryDashboard = ({
                 </form>
               )}
             </Paper>
+
+            {/* My Recent Transactions with CSV Export */}
             <Paper sx={{ mt: 4, p: 3 }}>
-              <Typography variant="h5" sx={styles.sectionTitle}>
-                My Recent Transactions
-              </Typography>
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  mb: 3,
+                  flexDirection: isMobile ? "column" : "row",
+                  gap: 2,
+                }}
+              >
+                <Typography variant="h5" sx={styles.sectionTitle}>
+                  My Recent Transactions -{" "}
+                  {action === "arrived" ? "Arrivals" : "Dispatches"}
+                  {transactions.length > 0 && ` (${pagination.total} total)`}
+                </Typography>
+
+                {/* CSV Export Section */}
+                <Paper sx={styles.exportCard}>
+                  <Typography
+                    variant="h6"
+                    sx={{ fontSize: "1rem", mb: 2, color: "#2c3e50" }}
+                  >
+                    Export Transactions
+                  </Typography>
+
+                  <Stack direction={isMobile ? "column" : "row"} spacing={2}>
+                    <TextField
+                      fullWidth={isMobile}
+                      label="Start Date"
+                      type="date"
+                      value={exportStartDate}
+                      onChange={(e) => setExportStartDate(e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                      sx={styles.formInput}
+                      InputProps={{
+                        startAdornment: (
+                          <CalendarToday color="action" sx={{ mr: 1 }} />
+                        ),
+                      }}
+                      size="small"
+                    />
+
+                    <TextField
+                      fullWidth={isMobile}
+                      label="End Date"
+                      type="date"
+                      value={exportEndDate}
+                      onChange={(e) => setExportEndDate(e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                      sx={styles.formInput}
+                      InputProps={{
+                        startAdornment: (
+                          <CalendarToday color="action" sx={{ mr: 1 }} />
+                        ),
+                      }}
+                      size="small"
+                    />
+
+                    <Button
+                      variant="contained"
+                      startIcon={
+                        exportLoading ? (
+                          <CircularProgress size={20} />
+                        ) : (
+                          <DownloadIcon />
+                        )
+                      }
+                      onClick={handleExportCSV}
+                      disabled={
+                        !exportStartDate || !exportEndDate || exportLoading
+                      }
+                      sx={styles.exportButton}
+                      size="small"
+                    >
+                      {exportLoading ? "Exporting..." : "Download CSV"}
+                    </Button>
+                  </Stack>
+                </Paper>
+              </Box>
 
               <Box sx={{ mb: 3 }}>
                 <TextField
@@ -627,6 +770,7 @@ const TanneryDashboard = ({
                   InputProps={{
                     endAdornment: <SearchIcon color="action" />,
                   }}
+                  size="small"
                 />
               </Box>
 
@@ -636,6 +780,13 @@ const TanneryDashboard = ({
                 </Box>
               ) : transactionError ? (
                 <Alert severity="error">{transactionError}</Alert>
+              ) : transactions.length === 0 ? (
+                <Box display="flex" justifyContent="center" py={4}>
+                  <Typography color="textSecondary">
+                    No {action === "arrived" ? "arrival" : "dispatch"}{" "}
+                    transactions found.
+                  </Typography>
+                </Box>
               ) : (
                 <>
                   <Box sx={{ overflowX: "auto" }}>
@@ -678,16 +829,9 @@ const TanneryDashboard = ({
                               borderBottom: "1px solid #ddd",
                             }}
                           >
-                            Arrival Date
-                          </th>
-                          <th
-                            style={{
-                              padding: "12px",
-                              textAlign: "left",
-                              borderBottom: "1px solid #ddd",
-                            }}
-                          >
-                            Dispatch Date
+                            {action === "arrived"
+                              ? "Arrival Date"
+                              : "Dispatch Date"}
                           </th>
                           <th
                             style={{
@@ -698,24 +842,46 @@ const TanneryDashboard = ({
                           >
                             Vehicle
                           </th>
-                          <th
-                            style={{
-                              padding: "12px",
-                              textAlign: "left",
-                              borderBottom: "1px solid #ddd",
-                            }}
-                          >
-                            Lot No.
-                          </th>
-                          <th
-                            style={{
-                              padding: "12px",
-                              textAlign: "left",
-                              borderBottom: "1px solid #ddd",
-                            }}
-                          >
-                            Sent To
-                          </th>
+                          {action === "dispatched" && (
+                            <>
+                              <th
+                                style={{
+                                  padding: "12px",
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #ddd",
+                                }}
+                              >
+                                Lot No.
+                              </th>
+                              <th
+                                style={{
+                                  padding: "12px",
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #ddd",
+                                }}
+                              >
+                                Sent To
+                              </th>
+                              <th
+                                style={{
+                                  padding: "12px",
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #ddd",
+                                }}
+                              >
+                                Article
+                              </th>
+                              <th
+                                style={{
+                                  padding: "12px",
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #ddd",
+                                }}
+                              >
+                                Tannage Type
+                              </th>
+                            </>
+                          )}
                           <th
                             style={{
                               padding: "12px",
@@ -759,20 +925,29 @@ const TanneryDashboard = ({
                               {txn.tannery_stamp_code || "-"}
                             </td>
                             <td style={{ padding: "12px" }}>
-                              {formatDate(txn.arrival_date)}
-                            </td>
-                            <td style={{ padding: "12px" }}>
-                              {formatDate(txn.dispatch_date)}
+                              {action === "arrived"
+                                ? formatDate(txn.arrival_date)
+                                : formatDate(txn.dispatch_date)}
                             </td>
                             <td style={{ padding: "12px" }}>
                               {txn.vehicle_number || "-"}
                             </td>
-                            <td style={{ padding: "12px" }}>
-                              {txn.processed_lot_number || "-"}
-                            </td>
-                            <td style={{ padding: "12px" }}>
-                              {txn.dispatch_to || "-"}
-                            </td>
+                            {action === "dispatched" && (
+                              <>
+                                <td style={{ padding: "12px" }}>
+                                  {txn.processed_lot_number || "-"}
+                                </td>
+                                <td style={{ padding: "12px" }}>
+                                  {txn.dispatch_to || "-"}
+                                </td>
+                                <td style={{ padding: "12px" }}>
+                                  {txn.article || "-"}
+                                </td>
+                                <td style={{ padding: "12px" }}>
+                                  {txn.tannage_type || "-"}
+                                </td>
+                              </>
+                            )}
                             <td style={{ padding: "12px" }}>
                               {txn.hide_source || "-"}
                             </td>
@@ -787,30 +962,22 @@ const TanneryDashboard = ({
                       display: "flex",
                       justifyContent: "space-between",
                       mt: 2,
+                      alignItems: "center",
                     }}
                   >
                     <Button
                       disabled={pagination.page === 1}
-                      onClick={() =>
-                        setPagination((prev) => ({
-                          ...prev,
-                          page: prev.page - 1,
-                        }))
-                      }
+                      onClick={() => handlePageChange(pagination.page - 1)}
                     >
                       Previous
                     </Button>
                     <Typography>
-                      Page {pagination.page} of {pagination.totalPages}
+                      Page {pagination.page} of {pagination.totalPages} (Total:{" "}
+                      {pagination.total})
                     </Typography>
                     <Button
                       disabled={pagination.page >= pagination.totalPages}
-                      onClick={() =>
-                        setPagination((prev) => ({
-                          ...prev,
-                          page: prev.page + 1,
-                        }))
-                      }
+                      onClick={() => handlePageChange(pagination.page + 1)}
                     >
                       Next
                     </Button>
@@ -830,13 +997,7 @@ const TanneryDashboard = ({
           <Alert
             onClose={handleCloseSnackbar}
             severity={error ? "error" : "success"}
-            sx={{
-              width: "100%",
-              boxShadow: theme.shadows[4],
-              "& .MuiAlert-icon": {
-                fontSize: "1.5rem",
-              },
-            }}
+            sx={{ width: "100%" }}
           >
             {error || success}
           </Alert>
